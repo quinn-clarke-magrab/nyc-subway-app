@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NYC Subway Tracker</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <header class="masthead">
+          <h1>NYC Subway Tracker</h1>
+          <p class="subtitle">Tick off every stop you've been to.</p>
+        </header>
+
+        <section class="progress" aria-label="Overall progress">
+          <div class="progress-top">
+            <span class="progress-count"
+              ><strong id="visited-count">0</strong> / <span id="total-count">0</span></span
+            >
+            <span class="progress-pct" id="visited-pct">0%</span>
+          </div>
+          <div class="bar" role="progressbar" aria-labelledby="visited-count">
+            <div class="bar-fill" id="overall-bar"></div>
+          </div>
+          <p class="progress-note" id="progress-note"></p>
+        </section>
+
+        <section class="controls">
+          <div class="search-row">
+            <input
+              type="search"
+              id="search"
+              placeholder="Search stations…  (press /)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="random" class="ghost-btn" title="Jump to a random stop you haven't been to">
+              Surprise me
+            </button>
+          </div>
+
+          <div class="filter-block">
+            <div class="filter-label">Lines</div>
+            <div class="pills" id="line-filters"></div>
+          </div>
+
+          <div class="filter-block">
+            <div class="filter-label">Borough</div>
+            <div class="chips" id="borough-filters"></div>
+          </div>
+
+          <div class="filter-block">
+            <div class="filter-label">Show</div>
+            <div class="chips" id="status-filters">
+              <button class="chip is-on" data-status="all">All</button>
+              <button class="chip" data-status="visited">Been there</button>
+              <button class="chip" data-status="todo">Not yet</button>
+            </div>
+          </div>
+        </section>
+
+        <nav class="tabs" id="tabs">
+          <button class="tab is-on" data-tab="list">Stations</button>
+          <button class="tab" data-tab="stats">Breakdown</button>
+        </nav>
+
+        <section class="panel" id="panel-list">
+          <p class="list-meta" id="list-meta"></p>
+          <ul class="station-list" id="station-list"></ul>
+        </section>
+
+        <section class="panel is-hidden" id="panel-stats">
+          <h2 class="panel-heading">By line</h2>
+          <div id="line-stats" class="stat-rows"></div>
+          <h2 class="panel-heading">By borough</h2>
+          <div id="borough-stats" class="stat-rows"></div>
+        </section>
+
+        <footer class="sidebar-footer">
+          <button id="export" class="ghost-btn">Export</button>
+          <button id="import" class="ghost-btn">Import</button>
+          <button id="reset" class="ghost-btn danger">Reset</button>
+          <input type="file" id="import-file" accept="application/json,.json" hidden />
+        </footer>
+      </aside>
+
+      <main class="map-wrap">
+        <div id="map"></div>
+        <div class="map-legend">
+          <span><i class="dot dot-visited"></i> been there</span>
+          <span><i class="dot dot-todo"></i> not yet</span>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="src/stations.js"></script>
+    <script src="src/app.js"></script>
+  </body>
+</html>
