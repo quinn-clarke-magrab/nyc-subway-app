@@ -437,7 +437,7 @@ body {
 #map {
   position: absolute;
   inset: 0;
-  background: #0a0d12;
+  background: #bcdcea;
 }
 
 .map-legend {
@@ -447,12 +447,12 @@ body {
   z-index: 500;
   display: flex;
   gap: 12px;
-  background: rgba(12, 15, 20, 0.85);
-  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #cfcabb;
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 11.5px;
-  color: var(--text-dim);
+  color: #4a5262;
   pointer-events: none;
 }
 
@@ -470,13 +470,13 @@ body {
 }
 
 .dot-visited {
-  background: var(--good);
-  box-shadow: 0 0 0 1.5px #fff;
+  background: #1d2430;
+  box-shadow: 0 0 0 1.5px #1d2430;
 }
 
 .dot-todo {
-  background: #0c0f14;
-  box-shadow: 0 0 0 1.5px var(--text-dim);
+  background: #fff;
+  box-shadow: 0 0 0 1.5px #1d2430;
 }
 
 .station-marker {
@@ -486,20 +486,27 @@ body {
 /* Leaflet overrides */
 .leaflet-container {
   font: inherit;
-  background: #0a0d12;
+  /* There is no basemap — this is the water the boroughs sit in. */
+  background: #bcdcea;
 }
 
-/* Turns the standard OSM raster tiles into a dark basemap, so the app needs
-   no API key. Only the tiles are filtered — markers sit in a separate pane. */
-.leaflet-tile-pane {
-  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.86) saturate(0.7);
+.boro-label {
+  color: #a6a294;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  width: max-content !important;
 }
 
 .leaflet-tooltip.stop-tip {
-  background: #0c0f14;
-  border: 1px solid var(--line);
-  color: var(--text);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  background: #ffffff;
+  border: 1px solid #c9c4b6;
+  color: #1d2430;
+  box-shadow: 0 6px 18px rgba(20, 26, 36, 0.22);
   font-size: 12px;
   padding: 6px 9px;
   border-radius: 8px;
@@ -514,7 +521,7 @@ body {
 }
 
 .stop-tip .tip-sub {
-  color: var(--text-dim);
+  color: #6b7488;
   font-size: 11px;
 }
 
@@ -525,23 +532,23 @@ body {
 }
 
 .leaflet-control-attribution {
-  background: rgba(12, 15, 20, 0.8) !important;
-  color: var(--text-dim) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  color: #6b7488 !important;
 }
 
 .leaflet-control-attribution a {
-  color: var(--text-dim) !important;
+  color: #6b7488 !important;
 }
 
 .leaflet-bar a {
-  background: var(--bg-raised);
-  color: var(--text);
-  border-bottom-color: var(--line);
+  background: #ffffff;
+  color: #1d2430;
+  border-bottom-color: #d6d1c4;
 }
 
 .leaflet-bar a:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+  background: #f1eee5;
+  color: #1d2430;
 }
 
 /* ---------- toast ---------- */

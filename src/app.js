@@ -7,7 +7,14 @@
   'use strict';
 
   var STORAGE_KEY = 'nyc-subway-tracker.v1';
-  var STATIONS = (window.STATIONS || []).slice();
+
+  // The wall map leaves the Staten Island Railway off. Flip this to true to put
+  // the island, its 21 stops and the SIR line back on the map.
+  var INCLUDE_STATEN_ISLAND = false;
+
+  var STATIONS = (window.STATIONS || []).filter(function (s) {
+    return INCLUDE_STATEN_ISLAND || s.borough !== 'SI';
+  });
 
   // Official-ish MTA route colors. `dark` marks bullets that need black text.
   var ROUTE_COLORS = {
@@ -38,7 +45,9 @@
     { code: 'Q', name: 'Queens' },
     { code: 'Bx', name: 'Bronx' },
     { code: 'SI', name: 'Staten Island' },
-  ];
+  ].filter(function (b) {
+    return INCLUDE_STATEN_ISLAND || b.code !== 'SI';
+  });
   var BOROUGH_NAME = {};
   BOROUGHS.forEach(function (b) {
     BOROUGH_NAME[b.code] = b.name;
@@ -140,31 +149,313 @@
 
   // ---------- map ----------
 
-  var map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([40.73, -73.95], 11);
+  // The wall map takes two liberties with geography: it turns the city so
+  // Manhattan reads straight up the page, and it draws the dense middle larger
+  // than scale so it stays legible while the outer boroughs tighten up. Both
+  // happen here, to the coordinates rather than to the rendered map — rotating
+  // or scaling the rendering would put clicks out of step with what's drawn.
+  // Leaflet runs on CRS.Simple and never sees a real latitude; the station data
+  // stays honest lat/lon.
+  var ROTATION_DEG = 23; // Manhattan's long axis sits ~23° east of north
+  var PIVOT = { lat: 40.75, lon: -73.95 };
+  var SCALE = 3000; // plane units per degree of latitude at zoom 0
 
-  // Plain OSM tiles (no API key needed); the dark look comes from a CSS filter
-  // on .leaflet-tile-pane, so there's nothing to sign up for or pay for.
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · ' +
-      'stations: MTA / NY Open Data',
-    maxZoom: 19,
-  }).addTo(map);
+  // Magnification, strongest at the origin and easing off with distance.
+  // 0 gives true proportions; much past 1 and the outer boroughs look squashed.
+  var FISHEYE = 0.8;
+  var FISHEYE_ORIGIN = { lat: 40.758, lon: -73.979 }; // Midtown
+
+  var ROT = (ROTATION_DEG * Math.PI) / 180;
+  var COS_R = Math.cos(ROT);
+  var SIN_R = Math.sin(ROT);
+  var LON_SQUEEZE = Math.cos((PIVOT.lat * Math.PI) / 180);
+
+  // lat/lon -> flat rotated plane, before magnification. Returns [east, north].
+  function plane(lat, lon) {
+    var x = (lon - PIVOT.lon) * LON_SQUEEZE * SCALE;
+    var y = (lat - PIVOT.lat) * SCALE;
+    return [x * COS_R - y * SIN_R, x * SIN_R + y * COS_R];
+  }
+
+  var ORIGIN_XY = plane(FISHEYE_ORIGIN.lat, FISHEYE_ORIGIN.lon);
+  var FISHEYE_SPAN = 1; // set by measureSpan() once all the geometry is decoded
+
+  // Distance d from the origin becomes d(1+k) / (1 + k·d/span). Smooth, never
+  // folds back on itself, and leaves the outermost point exactly where it was,
+  // so magnifying the middle can't push the edges off the map.
+  function magnify(xy) {
+    if (!FISHEYE) return xy;
+    var dx = xy[0] - ORIGIN_XY[0];
+    var dy = xy[1] - ORIGIN_XY[1];
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1e-9) return xy;
+    var u = d / FISHEYE_SPAN;
+    var factor = ((u * (1 + FISHEYE)) / (1 + FISHEYE * u)) * (FISHEYE_SPAN / d);
+    return [ORIGIN_XY[0] + dx * factor, ORIGIN_XY[1] + dy * factor];
+  }
+
+  // CRS.Simple reads a LatLng as (northing, easting).
+  function project(lat, lon) {
+    var xy = magnify(plane(lat, lon));
+    return L.latLng(xy[1], xy[0]);
+  }
+
+  function projectPath(points) {
+    return points.map(function (p) {
+      return project(p[0], p[1]);
+    });
+  }
+
+  // The transform needs the size of the whole drawing up front, or the far
+  // corners get pulled inward and clipped.
+  function measureSpan(pointSets) {
+    var furthest = 0;
+    pointSets.forEach(function (points) {
+      points.forEach(function (p) {
+        var xy = plane(p[0], p[1]);
+        var dx = xy[0] - ORIGIN_XY[0];
+        var dy = xy[1] - ORIGIN_XY[1];
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d > furthest) furthest = d;
+      });
+    });
+    FISHEYE_SPAN = furthest || 1;
+  }
+
+  var map = L.map('map', {
+    crs: L.CRS.Simple,
+    zoomControl: true,
+    preferCanvas: true,
+    minZoom: -2, // -1 already fits the whole system; -2 is as far out as is useful
+    maxZoom: 4,
+    // Leaflet drives its zoom animation off the proxy element a tile layer
+    // creates. There are no tiles here, so the first animated zoom never
+    // finishes and every zoom after it is silently dropped — the +/- buttons
+    // and the scroll wheel stop working. Turning the animation off is the fix;
+    // with nothing to fade there is nothing to miss.
+    zoomAnimation: false,
+    markerZoomAnimation: false,
+    // A wheel notch moving a whole zoom level is a lurch on a map this small.
+    // Quarter-level steps and a longer wheel throw make it feel continuous.
+    zoomSnap: 0.25,
+    zoomDelta: 0.5,
+    wheelPxPerZoomLevel: 220,
+    wheelDebounceTime: 30,
+    // Arbitrary: fitBounds sets the real view once the geometry is measured.
+  }).setView([0, 0], 0);
+
+  L.control
+    .attribution({ prefix: false })
+    .addAttribution('Stations, routes & shoreline: MTA / NY State &amp; NYC Open Data')
+    .addTo(map);
+
+  // Stacked panes so drawing order is fixed regardless of load order: shoreline,
+  // then borough names sitting in the background like the wall map, then routes,
+  // then station ticks on top.
+  var PANES = [
+    ['landPane', 350],
+    ['parkPane', 355],
+    ['labelPane', 360],
+    ['routePane', 380],
+    ['stationPane', 450],
+  ];
+  var renderers = {};
+  PANES.forEach(function (entry) {
+    map.createPane(entry[0]).style.zIndex = String(entry[1]);
+    renderers[entry[0]] = L.canvas({ pane: entry[0] });
+  });
+
+  // Reverses the delta encoding in src/geo.js: signed zig-zag varints, 5 bits
+  // per character, at 1e-5 degrees. Mirrors the encoder in scripts/build_geo.py.
+  var ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-';
+  var ALPHA_INDEX = {};
+  for (var ai = 0; ai < ALPHA.length; ai++) ALPHA_INDEX[ALPHA[ai]] = ai;
+
+  function decodePath(encoded) {
+    var points = [];
+    var i = 0;
+    var lat = 0;
+    var lng = 0;
+
+    function next() {
+      var result = 0;
+      var shift = 0;
+      var chunk;
+      do {
+        chunk = ALPHA_INDEX[encoded[i++]];
+        result |= (chunk & 0x1f) << shift;
+        shift += 5;
+      } while (chunk >= 0x20);
+      return result & 1 ? ~(result >> 1) : result >> 1;
+    }
+
+    while (i < encoded.length) {
+      lat += next();
+      lng += next();
+      points.push([lat / 1e5, lng / 1e5]);
+    }
+    return points;
+  }
+
+  var GEO = window.SUBWAY_GEO || { routes: {}, land: [] };
+
+  // Each key is one color on the MTA map, not one service — the 1/2/3 share a
+  // red trunk the same way they do on the wall map.
+  var MAP_COLORS = {
+    red: '#EE352E',
+    green: '#00933C',
+    purple: '#B933AD',
+    blue: '#0039A6',
+    orange: '#FF6319',
+    lime: '#6CBE45',
+    brown: '#996633',
+    grey: '#A7A9AC',
+    yellow: '#FCCC0A',
+    slate: '#808183',
+    sir: '#0039A6',
+  };
+
+  // The wall map draws its big parks in green. Corners are the real ones, so
+  // the shape lands correctly once rotation and magnification are applied.
+  var PARKS = [
+    {
+      name: 'Central Park',
+      ring: [
+        [40.768, -73.9819], // 59 St & Central Park West
+        [40.7644, -73.973], // 59 St & 5 Av
+        [40.7969, -73.9497], // 110 St & 5 Av
+        [40.8007, -73.9582], // 110 St & Central Park West
+      ],
+    },
+  ];
+
+  // Anything west of this belongs to Staten Island, which the map leaves out.
+  function isStatenIsland(points) {
+    var lon = 0;
+    points.forEach(function (p) {
+      lon += p[1];
+    });
+    return lon / points.length < -74.05;
+  }
+
+  var landRings = (GEO.land || []).map(decodePath).filter(function (ring) {
+    return INCLUDE_STATEN_ISLAND || !isStatenIsland(ring);
+  });
+
+  var routeLines = [];
+  Object.keys(GEO.routes || {}).forEach(function (colorKey) {
+    if (!INCLUDE_STATEN_ISLAND && colorKey === 'sir') return;
+    var color = MAP_COLORS[colorKey] || '#6b7688';
+    GEO.routes[colorKey].forEach(function (encoded) {
+      routeLines.push({ color: color, points: decodePath(encoded) });
+    });
+  });
+
+  // Everything that will be drawn, so the magnification knows its outer limit.
+  measureSpan(
+    [
+      STATIONS.map(function (s) {
+        return [s.lat, s.lon];
+      }),
+    ]
+      .concat(landRings)
+      .concat(
+        routeLines.map(function (line) {
+          return line.points;
+        }),
+      ),
+  );
+
+  landRings.forEach(function (ring) {
+    L.polygon(projectPath(ring), {
+      pane: 'landPane',
+      renderer: renderers.landPane,
+      color: '#d9d5c9',
+      weight: 1,
+      fillColor: '#fbf9f2',
+      fillOpacity: 1,
+      interactive: false,
+    }).addTo(map);
+  });
+
+  PARKS.forEach(function (park) {
+    L.polygon(projectPath(park.ring), {
+      pane: 'parkPane',
+      renderer: renderers.parkPane,
+      color: '#9ac98a',
+      weight: 1,
+      fillColor: '#bcdfae',
+      fillOpacity: 1,
+      interactive: false,
+    }).addTo(map);
+  });
+
+  routeLines.forEach(function (line) {
+    L.polyline(projectPath(line.points), {
+      pane: 'routePane',
+      renderer: renderers.routePane,
+      color: line.color,
+      weight: 5,
+      opacity: 1,
+      lineCap: 'round',
+      lineJoin: 'round',
+      interactive: false,
+    }).addTo(map);
+  });
+
+  // Borough names set into the background, the way they are on the wall map.
+  // Placed in open space rather than at true centroids, so they don't sit on
+  // top of the lines.
+  [
+    ['The Bronx', 40.883, -73.845],
+    ['Manhattan', 40.812, -74.005],
+    ['Queens', 40.733, -73.772],
+    ['Brooklyn', 40.617, -73.932],
+  ].forEach(function (entry) {
+    L.marker(project(entry[1], entry[2]), {
+      pane: 'labelPane',
+      interactive: false,
+      keyboard: false,
+      icon: L.divIcon({ className: 'boro-label', html: entry[0], iconSize: null }),
+    }).addTo(map);
+  });
 
   var markerLayer = L.layerGroup().addTo(map);
 
+  // Zoomed out, the whole system is on screen and fat dots would bury the route
+  // lines; zoomed in there's room for proper targets. So size follows zoom.
+  // With the whole system on screen, neighbouring stops are only a few pixels
+  // apart and fat ticks would merge into one white smear over the lines. Size
+  // follows how far apart a typical pair of stops currently is on screen.
+  var TYPICAL_GAP_DEG = 0.005;
+
+  function baseRadius() {
+    var gapPx = TYPICAL_GAP_DEG * SCALE * Math.pow(2, map.getZoom());
+    return Math.max(1.5, Math.min(9, gapPx * 0.32));
+  }
+
+  // Station ticks follow the wall map: a hollow white circle with a dark ring,
+  // filled in solid once you've been there. Deliberately ink rather than the
+  // line's own color — a filled stop on the grey L or the yellow N/Q/R/W would
+  // otherwise disappear into the line underneath it.
   function markerStyle(station) {
-    var color = routeColor(station.routes[0]);
-    var done = isVisited(station);
+    var r = baseRadius();
     return {
-      radius: done ? 6 : 5,
-      color: done ? '#ffffff' : color,
-      weight: done ? 1.5 : 2,
+      radius: r,
+      color: '#1d2430',
+      weight: Math.max(0.8, r * 0.3),
       opacity: 1,
-      fillColor: done ? color : '#0c0f14',
-      fillOpacity: done ? 1 : 0.9,
+      fillColor: isVisited(station) ? '#1d2430' : '#ffffff',
+      fillOpacity: 1,
     };
   }
+
+  map.on('zoomend', function () {
+    STATIONS.forEach(function (station) {
+      var marker = markers.get(station.id);
+      if (marker) marker.setStyle(markerStyle(station));
+    });
+  });
 
   function tooltipHtml(station) {
     var wrap = el('div');
@@ -181,7 +472,10 @@
   }
 
   STATIONS.forEach(function (station) {
-    var marker = L.circleMarker([station.lat, station.lon], markerStyle(station));
+    var options = markerStyle(station);
+    options.pane = 'stationPane';
+    options.renderer = renderers.stationPane;
+    var marker = L.circleMarker(project(station.lat, station.lon), options);
     marker.bindTooltip(tooltipHtml(station), {
       className: 'stop-tip',
       direction: 'top',
@@ -231,7 +525,7 @@
       return s.id === id;
     });
     if (pan && station) {
-      map.setView([station.lat, station.lon], Math.max(map.getZoom(), 14), { animate: true });
+      map.setView(project(station.lat, station.lon), Math.max(map.getZoom(), 2), { animate: true });
       var marker = markers.get(id);
       if (marker) marker.openTooltip();
     }
@@ -566,9 +860,9 @@
   map.fitBounds(
     L.latLngBounds(
       STATIONS.map(function (s) {
-        return [s.lat, s.lon];
+        return project(s.lat, s.lon);
       }),
     ),
-    { padding: [30, 30] },
+    { padding: [14, 14] },
   );
 })();
