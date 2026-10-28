@@ -258,6 +258,7 @@
     ['labelPane', 360],
     ['routePane', 380],
     ['stationPane', 450],
+    ['stationLabelPane', 460],
   ];
   var renderers = {};
   PANES.forEach(function (entry) {
@@ -495,6 +496,129 @@
     marker.setTooltipContent(tooltipHtml(station));
   }
 
+  // ---------- station labels ----------
+
+  // 424 names will not fit on screen at once, so the map draws as many as it
+  // can without them touching: biggest interchanges first, each one tried to
+  // the right of its tick, then left, above, below. Anything with nowhere to go
+  // is left off until you zoom in and room opens up.
+  var labelHost = L.DomUtil.create('div', 'station-labels', map.getPane('stationLabelPane'));
+  var LABEL_FONT = '600 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial';
+  var LABEL_HEIGHT = 12;
+  var LABEL_PAD = 3;
+  var measureCtx = document.createElement('canvas').getContext('2d');
+  var widthCache = {};
+
+  function textWidth(text) {
+    if (widthCache[text] === undefined) {
+      measureCtx.font = LABEL_FONT;
+      widthCache[text] = measureCtx.measureText(text).width;
+    }
+    return widthCache[text];
+  }
+
+  // "Times Sq-42 St / 42 St-Port Authority Bus Terminal" -> "Times Sq-42 St".
+  // The data already uses the MTA's own abbreviations (Av, St, Sq, Blvd), so
+  // there's little left to shorten beyond dropping the second half of a
+  // complex's name and any parenthetical.
+  var shortNames = {};
+  function shortName(station) {
+    if (shortNames[station.id] === undefined) {
+      var s = station.name.split(' / ')[0].replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+      if (s.length > 22) s = s.slice(0, 21).replace(/[\s-]+$/, '') + '…';
+      shortNames[station.id] = s;
+    }
+    return shortNames[station.id];
+  }
+
+  function overlaps(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function renderLabels() {
+    labelHost.textContent = '';
+
+    var bounds = map.getBounds().pad(0.05);
+    var r = baseRadius();
+    var visible = [];
+    markers.forEach(function (marker, id) {
+      if (!markerLayer.hasLayer(marker)) return;
+      if (!bounds.contains(marker.getLatLng())) return;
+      visible.push(id);
+    });
+
+    // Interchanges earn their label first; ties broken by id so the set is
+    // stable as you pan rather than flickering between equals.
+    var byId = {};
+    STATIONS.forEach(function (s) {
+      byId[s.id] = s;
+    });
+    visible.sort(function (a, b) {
+      return byId[b].routes.length - byId[a].routes.length || a - b;
+    });
+
+    // Every tick in view is an obstacle, not just the ones that get a label.
+    var taken = visible.map(function (id) {
+      var p = map.latLngToLayerPoint(markers.get(id).getLatLng());
+      return { x: p.x - r, y: p.y - r, w: r * 2, h: r * 2 };
+    });
+
+    var frag = document.createDocumentFragment();
+    var gap = r + 3;
+
+    visible.forEach(function (id) {
+      var station = byId[id];
+      var text = shortName(station);
+      var w = textWidth(text);
+      var p = map.latLngToLayerPoint(markers.get(id).getLatLng());
+
+      var candidates = [
+        { x: p.x + gap, y: p.y - LABEL_HEIGHT / 2 },
+        { x: p.x - gap - w, y: p.y - LABEL_HEIGHT / 2 },
+        { x: p.x - w / 2, y: p.y - gap - LABEL_HEIGHT },
+        { x: p.x - w / 2, y: p.y + gap },
+      ];
+
+      for (var i = 0; i < candidates.length; i++) {
+        var rect = {
+          x: candidates[i].x - LABEL_PAD,
+          y: candidates[i].y - LABEL_PAD,
+          w: w + LABEL_PAD * 2,
+          h: LABEL_HEIGHT + LABEL_PAD * 2,
+        };
+        var clear = true;
+        for (var j = 0; j < taken.length; j++) {
+          if (overlaps(rect, taken[j])) {
+            clear = false;
+            break;
+          }
+        }
+        if (!clear) continue;
+
+        var node = el('span', 'stop-label' + (isVisited(station) ? ' is-visited' : ''), text);
+        node.style.left = candidates[i].x + 'px';
+        node.style.top = candidates[i].y + 'px';
+        frag.appendChild(node);
+        taken.push(rect);
+        return;
+      }
+    });
+
+    labelHost.appendChild(frag);
+  }
+
+  map.on('moveend zoomend', renderLabels);
+
+  // The map sits in a flex layout, so its box can settle after Leaflet has
+  // already measured it — the whole drawing then ends up off-screen. Re-measure
+  // once the layout is final, and whenever the window changes size.
+  window.addEventListener('resize', function () {
+    map.invalidateSize();
+  });
+  requestAnimationFrame(function () {
+    map.invalidateSize();
+  });
+
   // ---------- toggling ----------
 
   function toggle(station) {
@@ -511,6 +635,7 @@
 
     // A station can drop out of the current view once its status flips.
     if (filters.status !== 'all') renderList();
+    else renderLabels();
   }
 
   function setActive(id, pan) {
@@ -619,6 +744,7 @@
     shown.forEach(function (station) {
       markerLayer.addLayer(markers.get(station.id));
     });
+    renderLabels();
   }
 
   function renderProgress() {
