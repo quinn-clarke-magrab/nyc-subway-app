@@ -765,8 +765,10 @@
     }
   }
 
-  function statRow(label, labelNode, done, total) {
-    var row = el('div', 'stat-row');
+  // `detailed` rows get a spelled-out name and a percentage; the line rows stay
+  // compact because a route bullet needs no room and there are 23 of them.
+  function statRow(label, labelNode, done, total, detailed) {
+    var row = el('div', 'stat-row' + (detailed ? ' is-detailed' : ''));
     row.appendChild(labelNode || el('span', 'stat-label', label));
 
     var bar = el('div', 'bar');
@@ -776,6 +778,7 @@
     row.appendChild(bar);
 
     row.appendChild(el('span', 'count', done + '/' + total));
+    if (detailed) row.appendChild(el('span', 'stat-pct', pct(done, total) + '%'));
     return row;
   }
 
@@ -799,7 +802,7 @@
       });
       if (!inBorough.length) return;
       var done = inBorough.filter(isVisited).length;
-      boroughBox.appendChild(statRow(b.name, null, done, inBorough.length));
+      boroughBox.appendChild(statRow(b.name, null, done, inBorough.length, true));
     });
   }
 

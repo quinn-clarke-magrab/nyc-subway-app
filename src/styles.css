@@ -403,9 +403,21 @@ body {
   height: 6px;
 }
 
+.stat-row.is-detailed {
+  grid-template-columns: 82px 1fr 50px 34px;
+  gap: 8px;
+}
+
 .stat-row .count {
   font-size: 11.5px;
   color: var(--text-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-pct {
+  font-size: 11.5px;
+  color: var(--accent);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
