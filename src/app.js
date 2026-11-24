@@ -226,7 +226,9 @@
     crs: L.CRS.Simple,
     zoomControl: true,
     preferCanvas: true,
-    minZoom: -2, // -1 already fits the whole system; -2 is as far out as is useful
+    // -1 fits the whole system on a desktop pane; a phone needs to go further
+    // out than that, and fitAll was landing exactly on the old -2 floor.
+    minZoom: -3,
     maxZoom: 4,
     // Leaflet drives its zoom animation off the proxy element a tile layer
     // creates. There are no tiles here, so the first animated zoom never
@@ -260,10 +262,20 @@
     ['stationPane', 450],
     ['stationLabelPane', 460],
   ];
+  // A fingertip is about 40px across and a station tick is a few pixels, so on
+  // touch screens the canvas counts a tap as hitting the nearest stop within
+  // this many pixels. Without it you have to pinch right in before anything is
+  // tappable at all.
+  var TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  var HIT_TOLERANCE = TOUCH ? 14 : 3;
+
   var renderers = {};
   PANES.forEach(function (entry) {
     map.createPane(entry[0]).style.zIndex = String(entry[1]);
-    renderers[entry[0]] = L.canvas({ pane: entry[0] });
+    renderers[entry[0]] = L.canvas({
+      pane: entry[0],
+      tolerance: entry[0] === 'stationPane' ? HIT_TOLERANCE : 0,
+    });
   });
 
   // Reverses the delta encoding in src/geo.js: signed zig-zag varints, 5 bits
@@ -432,7 +444,9 @@
 
   function baseRadius() {
     var gapPx = TYPICAL_GAP_DEG * SCALE * Math.pow(2, map.getZoom());
-    return Math.max(1.5, Math.min(9, gapPx * 0.32));
+    // Floor is higher on touch so a stop is still something you can see and aim
+    // at on a phone, where the whole system is squeezed into a few hundred px.
+    return Math.max(TOUCH ? 2.6 : 1.5, Math.min(9, gapPx * 0.32));
   }
 
   // Station ticks follow the wall map: a hollow white circle with a dark ring,
@@ -503,8 +517,14 @@
   // the right of its tick, then left, above, below. Anything with nowhere to go
   // is left off until you zoom in and room opens up.
   var labelHost = L.DomUtil.create('div', 'station-labels', map.getPane('stationLabelPane'));
-  var LABEL_FONT = '600 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial';
-  var LABEL_HEIGHT = 12;
+  // Smaller on a phone, where the whole system is a few hundred pixels wide and
+  // desktop-sized names would crowd each other out. The host carries the font
+  // so the measuring canvas and the rendered label can never drift apart.
+  var LABEL_SIZE = TOUCH ? 9.5 : 10.5;
+  var LABEL_FONT =
+    '600 ' + LABEL_SIZE + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial';
+  var LABEL_HEIGHT = Math.round(LABEL_SIZE + 2);
+  labelHost.style.font = LABEL_FONT;
   var LABEL_PAD = 3;
   var measureCtx = document.createElement('canvas').getContext('2d');
   var widthCache = {};
@@ -563,6 +583,21 @@
       return { x: p.x - r, y: p.y - r, w: r * 2, h: r * 2 };
     });
 
+    // A name sliced in half by the edge of the map is worse than no name, so a
+    // placement has to fit inside the viewport as well as miss everything else.
+    var topLeft = map.containerPointToLayerPoint([0, 0]);
+    var size = map.getSize();
+    var viewport = { x: topLeft.x + 2, y: topLeft.y + 2, w: size.x - 4, h: size.y - 4 };
+
+    function insideView(rect) {
+      return (
+        rect.x >= viewport.x &&
+        rect.y >= viewport.y &&
+        rect.x + rect.w <= viewport.x + viewport.w &&
+        rect.y + rect.h <= viewport.y + viewport.h
+      );
+    }
+
     var frag = document.createDocumentFragment();
     var gap = r + 3;
 
@@ -586,6 +621,7 @@
           w: w + LABEL_PAD * 2,
           h: LABEL_HEIGHT + LABEL_PAD * 2,
         };
+        if (!insideView(rect)) continue;
         var clear = true;
         for (var j = 0; j < taken.length; j++) {
           if (overlaps(rect, taken[j])) {
