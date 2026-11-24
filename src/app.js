@@ -609,15 +609,44 @@
 
   map.on('moveend zoomend', renderLabels);
 
-  // The map sits in a flex layout, so its box can settle after Leaflet has
-  // already measured it — the whole drawing then ends up off-screen. Re-measure
-  // once the layout is final, and whenever the window changes size.
-  window.addEventListener('resize', function () {
-    map.invalidateSize();
+  // The map sits in a flex layout, so its box can settle well after Leaflet has
+  // measured it and after any window resize event — an embedded browser pane
+  // opening at one size and reflowing to another never fires one. Watching the
+  // element itself catches every case. Until you move the map yourself, the
+  // view is re-fitted too, so a late reflow doesn't leave it framed for a size
+  // the map no longer is.
+  var userMoved = false;
+
+  function noteUserMoved() {
+    userMoved = true;
+  }
+
+  ['pointerdown', 'wheel', 'keydown'].forEach(function (type) {
+    map.getContainer().addEventListener(type, noteUserMoved, { passive: true });
   });
-  requestAnimationFrame(function () {
-    map.invalidateSize();
-  });
+
+  function fitAll() {
+    map.fitBounds(
+      L.latLngBounds(
+        STATIONS.map(function (s) {
+          return project(s.lat, s.lon);
+        }),
+      ),
+      { padding: [14, 14] },
+    );
+  }
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () {
+      map.invalidateSize();
+      if (!userMoved) fitAll();
+    }).observe(map.getContainer());
+  } else {
+    window.addEventListener('resize', function () {
+      map.invalidateSize();
+      if (!userMoved) fitAll();
+    });
+  }
 
   // ---------- toggling ----------
 
@@ -986,12 +1015,5 @@
   renderStats();
   renderList();
 
-  map.fitBounds(
-    L.latLngBounds(
-      STATIONS.map(function (s) {
-        return project(s.lat, s.lon);
-      }),
-    ),
-    { padding: [14, 14] },
-  );
+  fitAll();
 })();
