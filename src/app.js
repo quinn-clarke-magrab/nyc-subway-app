@@ -661,27 +661,55 @@
     map.getContainer().addEventListener(type, noteUserMoved, { passive: true });
   });
 
+  var NARROW = window.matchMedia('(max-width: 860px)');
+
   function fitAll() {
+    // On a phone the floating bar sits over the top of the map and the
+    // attribution over the bottom, so the city is inset past both.
+    var top = NARROW.matches ? 54 : 14;
+    var bottom = NARROW.matches ? 30 : 14;
     map.fitBounds(
       L.latLngBounds(
         STATIONS.map(function (s) {
           return project(s.lat, s.lon);
         }),
       ),
-      { padding: [14, 14] },
+      { paddingTopLeft: L.point(14, top), paddingBottomRight: L.point(14, bottom) },
     );
   }
 
+  function remeasure() {
+    var box = map.getContainer();
+    // Zero while the list is covering it; measuring then would corrupt the view.
+    if (!box.offsetWidth || !box.offsetHeight) return;
+    map.invalidateSize();
+    if (!userMoved) fitAll();
+    renderLabels();
+  }
+
   if (window.ResizeObserver) {
-    new ResizeObserver(function () {
-      map.invalidateSize();
-      if (!userMoved) fitAll();
-    }).observe(map.getContainer());
+    new ResizeObserver(remeasure).observe(map.getContainer());
   } else {
-    window.addEventListener('resize', function () {
-      map.invalidateSize();
-      if (!userMoved) fitAll();
-    });
+    window.addEventListener('resize', remeasure);
+  }
+
+  // ---------- phone map/list switch ----------
+
+  var viewToggle = $('#view-toggle');
+
+  function setListView(showList) {
+    document.body.classList.toggle('show-list', showList);
+    viewToggle.textContent = showList ? 'Map' : 'List';
+    viewToggle.setAttribute('aria-pressed', String(showList));
+    if (!showList) remeasure();
+  }
+
+  viewToggle.addEventListener('click', function () {
+    setListView(!document.body.classList.contains('show-list'));
+  });
+
+  function showMapIfListCovering() {
+    if (document.body.classList.contains('show-list')) setListView(false);
   }
 
   // ---------- toggling ----------
@@ -715,6 +743,10 @@
       return s.id === id;
     });
     if (pan && station) {
+      // On a phone the list is covering the map, and panning something you
+      // can't see is no use — so show it.
+      showMapIfListCovering();
+      userMoved = true;
       map.setView(project(station.lat, station.lon), Math.max(map.getZoom(), 2), { animate: true });
       var marker = markers.get(id);
       if (marker) marker.openTooltip();
@@ -742,6 +774,40 @@
 
   function visibleStations() {
     return STATIONS.filter(matches);
+  }
+
+  // What you've narrowed to, ignoring the been-there/not-yet switch: picking
+  // "Not yet" shouldn't make Brooklyn's total shrink to the stops you've missed.
+  function scopeStations() {
+    var saved = filters.status;
+    filters.status = 'all';
+    var set = STATIONS.filter(matches);
+    filters.status = saved;
+    return set;
+  }
+
+  function scopeLabel() {
+    var parts = [];
+    if (filters.boroughs.size) {
+      parts.push(
+        BOROUGHS.filter(function (b) {
+          return filters.boroughs.has(b.code);
+        })
+          .map(function (b) {
+            return b.name;
+          })
+          .join(' + '),
+      );
+    }
+    if (filters.routes.size) {
+      parts.push(
+        ROUTE_ORDER.filter(function (r) {
+          return filters.routes.has(r);
+        }).join('/') + (filters.routes.size > 1 ? ' lines' : ' line'),
+      );
+    }
+    if (filters.query) parts.push('“' + filters.query + '”');
+    return parts.join(' · ');
   }
 
   // ---------- rendering ----------
@@ -810,6 +876,7 @@
       markerLayer.addLayer(markers.get(station.id));
     });
     renderLabels();
+    renderScope();
   }
 
   function renderProgress() {
@@ -820,14 +887,47 @@
     $('#visited-pct').textContent = percent + '%';
     $('#overall-bar').style.width = percent + '%';
 
+    // Mirrored into the bar that floats over the full-screen map on a phone.
+    $('#m-count').textContent = done;
+    $('#m-total').textContent = STATIONS.length;
+    $('#m-pct').textContent = percent + '%';
+
     var note = $('#progress-note');
     if (!done) {
-      note.textContent = 'Click a dot on the map, or a checkbox in the list.';
+      note.textContent = 'Tap a dot on the map, or a checkbox in the list.';
     } else if (done === STATIONS.length) {
       note.textContent = 'Every stop in the system. Genuinely remarkable.';
     } else {
       note.textContent = STATIONS.length - done + ' to go.';
     }
+
+    renderScope();
+  }
+
+  // Tapping a borough (or a line) answers "how am I doing there?" right under
+  // the overall number, rather than making you go and read the Breakdown tab.
+  function renderScope() {
+    var box = $('#scope-note');
+    var label = scopeLabel();
+    if (!label) {
+      box.classList.add('is-hidden');
+      return;
+    }
+
+    var set = scopeStations();
+    var done = set.filter(isVisited).length;
+    var percent = pct(done, set.length);
+
+    box.classList.remove('is-hidden');
+    box.textContent = '';
+    box.appendChild(el('span', 'scope-name', label));
+    box.appendChild(el('span', 'scope-count', done + '/' + set.length));
+    box.appendChild(el('span', 'scope-pct', percent + '%'));
+    var bar = el('div', 'bar');
+    var fill = el('div', 'bar-fill');
+    fill.style.width = percent + '%';
+    bar.appendChild(fill);
+    box.appendChild(bar);
   }
 
   // `detailed` rows get a spelled-out name and a percentage; the line rows stay

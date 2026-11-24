@@ -17,6 +17,16 @@
     <link rel="stylesheet" href="src/styles.css" />
   </head>
   <body>
+    <!-- Phones only: the map goes full screen, so progress and the way back to
+         the list have to float above it. -->
+    <div class="mobile-bar">
+      <span class="mobile-progress"
+        ><strong id="m-count">0</strong> / <span id="m-total">0</span></span
+      >
+      <span class="mobile-pct" id="m-pct">0%</span>
+      <button id="view-toggle" class="view-toggle" aria-pressed="false">List</button>
+    </div>
+
     <div class="app">
       <aside class="sidebar">
         <header class="masthead">
@@ -35,6 +45,7 @@
             <div class="bar-fill" id="overall-bar"></div>
           </div>
           <p class="progress-note" id="progress-note"></p>
+          <div class="scope-note is-hidden" id="scope-note"></div>
         </section>
 
         <section class="controls">
